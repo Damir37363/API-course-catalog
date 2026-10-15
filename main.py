@@ -1,9 +1,18 @@
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
 from data import find_course, get_all_courses
 from models import Course
 
 app = FastAPI(title="Course Catalog API")
+
+# Allow the Next.js frontend (an origin = scheme + host + port, no path, no trailing slash)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 def pagination(page: int = 1, page_size: int = 20):
