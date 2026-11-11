@@ -149,3 +149,11 @@ in the database: 13
 
 - The first variant loses a like: `a.likes += 1` reads 11 into Python, computes 12 there, and sends `UPDATE ... SET likes = 12`. Bob read the same 11 earlier, so he also sends `SET likes = 12`; the second write overwrites the first with a value that was already stale, so there are two likes but the counter grew by one.
 - The second variant sends an expression, `UPDATE courses SET likes = courses.likes + 1`, so the database does the addition itself, using the value that is in the row at that moment. This is where the row lock from Lecture 6 matters: while one transaction is updating a row, a second `UPDATE` of the same row waits until the first one finishes and then works with its result (12), so the second likes brings it to 13. That is why the `like` route is written as `update(Course).values(likes=Course.likes + 1)`.
+
+### Task 5. passive_deletes and the cascade in the database
+
+`python try_delete.py` deletes student 3 (who has one enrollment). Before: 3 students and 6 enrollments.
+
+- Without `passive_deletes=True` in `Student.enrollments` the script failed: `IntegrityError (psycopg.errors.NotNullViolation) null value in column "student_id" of relation "enrollments" violates not-null constraint`, `Failing row contains (6, ai-integration, null, ...)`, `[SQL: UPDATE enrollments SET student_id=... WHERE enrollments.id = ...]`. The ORM does not know about the database's `ON DELETE CASCADE`: before deleting the student it loaded their enrollments and tried to "detach" them by writing `student_id = NULL`, and the required column refused. The transaction was rolled back (still 3 students and 6 enrollments).
+- With `passive_deletes=True` the script finished without errors and the counters became 2 students and 5 enrollments: SQLAlchemy sends only `DELETE FROM students ...`, and the database deletes the student's enrollment by the cascade.
+- Why they go together: `ON DELETE CASCADE` is a rule of the database, and `passive_deletes=True` tells the ORM "do not load the children and do not touch them, the database is responsible for the deletion". If the foreign key has `ON DELETE CASCADE`, the relationship on the parent side must have `passive_deletes=True`; otherwise the ORM gets ahead of the database and breaks. Data was restored with `seed.sql`, and the model has `passive_deletes=True` back.
