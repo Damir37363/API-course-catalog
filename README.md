@@ -101,3 +101,15 @@ Each experiment was done one at a time, and the project was returned to its orig
 | Verification | Yes. The SQL from `alembic upgrade 0001:0002 --sql` was read (`BEGIN`, `ADD COLUMN`, `UPDATE`, `SET NOT NULL`, `UPDATE alembic_version`, `COMMIT`); the `upgrade -> downgrade -> upgrade` cycle passed (on the training database, not on a copy of it); `alembic check` is clean. |
 | History | Yes. `alembic heads` shows a single head (`0002`); the migration is in the same commit as the model, the schema, the `level` filter, and `seed.sql`. |
 | Application | Yes. Every course response has a new required `level` field and `GET /courses` has the `?level=` filter; `CourseOut` and `seed.sql` were updated. Clients that ignore unknown fields (like the current frontend) are not affected. |
+
+## Bonus
+
+All bonus tasks were done on clean data (`seed.sql`). After tasks 1, 2, and 5 the changes to the models and the migrations were rolled back (`alembic check` is clean, `alembic heads` is `0002`). The scripts of tasks 3–5 stay in the repository: `try_n_plus_1.py`, `try_lost_update.py` (add `atomic` for the fixed variant), and `try_delete.py`.
+
+### Task 1. A CHECK that autogenerate does not see
+
+- I added `CheckConstraint("level IN ('beginner', 'intermediate', 'advanced')", name="level")` to `Course.__table_args__`. `alembic check` still printed `No new upgrade operations detected.`, and `alembic revision --autogenerate` created an empty migration (`pass` in both functions).
+- Why: autogenerate compares tables, columns (types, NULL / NOT NULL), indexes, named UNIQUE constraints, and foreign keys. By default it does not compare CHECK constraints (nor `server_default`), so a change to a CHECK never shows up as a difference and has to be written by hand.
+- I wrote `0003_level_check.py` by hand: `op.create_check_constraint(op.f("courses_level_check"), "courses", "level IN (...)")` in `upgrade()` and `op.drop_constraint(..., type_="check")` in `downgrade()`. After `alembic upgrade head` the database rejected `UPDATE courses SET level = 'expert'` (`new row for relation "courses" violates check constraint "courses_level_check"`).
+- Why `op.f` is needed: Alembic passes every constraint name that is not wrapped in `op.f(...)` through `naming_convention`. The `ck` template is `%(table_name)s_%(constraint_name)s_check`, so the plain string `"courses_level_check"` in `downgrade()` turned into `courses_courses_level_check_check`, a constraint that does not exist. `alembic downgrade -1` failed with `UndefinedObject ... DROP CONSTRAINT courses_courses_level_check_check`, and the database stayed at `0003 (head)`. `op.f("courses_level_check")` means "this name is already final, do not apply the template again"; with it in `downgrade()` the rollback worked (`Running downgrade 0003 -> 0002`). In a project with a `naming_convention`, every constraint name in a migration is wrapped in `op.f(...)`.
+- Rolled back: the file `0003_level_check.py` and the `CheckConstraint` line in the model were deleted.
