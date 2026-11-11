@@ -119,3 +119,16 @@ All bonus tasks were done on clean data (`seed.sql`). After tasks 1, 2, and 5 th
 - On a throwaway database `scratch` (tables from `alembic upgrade head`, data from `seed.sql`) I renamed `description` to `summary` in the model. Autogenerate saw two independent events, `Detected added column 'courses.summary'` and `Detected removed column 'courses.description'`, and proposed `op.add_column('courses', sa.Column('summary', sa.Text(), nullable=False))` plus `op.drop_column('courses', 'description')`. That would drop every description, and adding a required column to a table that has rows fails.
 - `op.alter_column("courses", "description", new_column_name="summary")` is a real rename: the database renames the column in place (an `ALTER TABLE ... RENAME` that only changes the catalog), so the values stay where they were; `downgrade()` does the same in the opposite direction. After `alembic upgrade head` the descriptions were under the new name (for example `api-design | Comparing REST and GraphQL in one hands-on project.`), and `alembic check` printed `No new upgrade operations detected.`
 - Cleaned up: the migration file was deleted, the model got `description` back, `DATABASE_URL` was unset, and `scratch` was dropped.
+
+### Task 3. The N+1 problem
+
+`python try_n_plus_1.py` counts the queries with the `before_cursor_execute` event:
+
+```text
+lazy          enrollments: 6, queries: 7
+selectinload  enrollments: 6, queries: 2
+```
+
+- With the default lazy loading, the list of six courses is one query, and each `course.enrollments` access sends one more (`... WHERE enrollments.course_id = ...`): 1 + 6 = 7 queries. With `selectinload` there are two: the list of courses and one shared query for all their enrollments (`WHERE course_id IN (...)`). With six courses the difference is invisible; with six hundred it separates a fast response from a slow one.
+- How to notice N+1: turn on `SQL_ECHO=true`, make one API request, and look for identical `SELECT` queries that differ only in a parameter; if their number grows with the number of rows, it is N+1.
+- `selectinload` and `joinedload`: `selectinload` runs a separate second query with `IN (...)`, so a collection costs two queries and parent rows are not repeated; it is a good default for collections. `joinedload` does everything in one query with a `LEFT OUTER JOIN`, which suits many-to-one relationships (an enrollment's course), but over a collection it repeats the parent row for every child and requires `.unique()` on the result. `raiseload` turns a hidden lazy query into an error, which helps to catch N+1 in tests. (Only `lazy` and `selectinload` were run here; the `joinedload` comparison is from Lecture 7.)
