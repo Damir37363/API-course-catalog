@@ -148,7 +148,7 @@ in the database: 13
 ```
 
 - The first variant loses a like: `a.likes += 1` reads 11 into Python, computes 12 there, and sends `UPDATE ... SET likes = 12`. Bob read the same 11 earlier, so he also sends `SET likes = 12`; the second write overwrites the first with a value that was already stale, so there are two likes but the counter grew by one.
-- The second variant sends an expression, `UPDATE courses SET likes = courses.likes + 1`, so the database does the addition itself, using the value that is in the row at that moment. This is where the row lock from Lecture 6 matters: while one transaction is updating a row, a second `UPDATE` of the same row waits until the first one finishes and then works with its result (12), so the second likes brings it to 13. That is why the `like` route is written as `update(Course).values(likes=Course.likes + 1)`.
+- The second variant sends an expression, `UPDATE courses SET likes = courses.likes + 1`, so the database does the addition itself, using the value that is in the row at that moment. This is where the row lock from Lecture 6 matters: while one transaction is updating a row, a second `UPDATE` of the same row waits until the first one finishes and then works with its result (12), so the second like brings it to 13. That is why the `like` route is written as `update(Course).values(likes=Course.likes + 1)`.
 
 ### Task 5. passive_deletes and the cascade in the database
 
