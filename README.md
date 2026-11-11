@@ -132,3 +132,20 @@ selectinload  enrollments: 6, queries: 2
 - With the default lazy loading, the list of six courses is one query, and each `course.enrollments` access sends one more (`... WHERE enrollments.course_id = ...`): 1 + 6 = 7 queries. With `selectinload` there are two: the list of courses and one shared query for all their enrollments (`WHERE course_id IN (...)`). With six courses the difference is invisible; with six hundred it separates a fast response from a slow one.
 - How to notice N+1: turn on `SQL_ECHO=true`, make one API request, and look for identical `SELECT` queries that differ only in a parameter; if their number grows with the number of rows, it is N+1.
 - `selectinload` and `joinedload`: `selectinload` runs a separate second query with `IN (...)`, so a collection costs two queries and parent rows are not repeated; it is a good default for collections. `joinedload` does everything in one query with a `LEFT OUTER JOIN`, which suits many-to-one relationships (an enrollment's course), but over a collection it repeats the parent row for every child and requires `.unique()` on the result. `raiseload` turns a hidden lazy query into an error, which helps to catch N+1 in tests. (Only `lazy` and `selectinload` were run here; the `joinedload` comparison is from Lecture 7.)
+
+### Task 4. A lost update in the ORM
+
+`python try_lost_update.py` opens two sessions (Alice and Bob) that read the same course and each add one like:
+
+```text
+$ python try_lost_update.py            # a.likes += 1, b.likes += 1
+Alice reads 11 | Bob reads 11
+in the database: 12
+
+$ python try_lost_update.py atomic     # a.likes = Course.likes + 1, b.likes = Course.likes + 1
+Alice reads 11 | Bob reads 11
+in the database: 13
+```
+
+- The first variant loses a like: `a.likes += 1` reads 11 into Python, computes 12 there, and sends `UPDATE ... SET likes = 12`. Bob read the same 11 earlier, so he also sends `SET likes = 12`; the second write overwrites the first with a value that was already stale, so there are two likes but the counter grew by one.
+- The second variant sends an expression, `UPDATE courses SET likes = courses.likes + 1`, so the database does the addition itself, using the value that is in the row at that moment. This is where the row lock from Lecture 6 matters: while one transaction is updating a row, a second `UPDATE` of the same row waits until the first one finishes and then works with its result (12), so the second likes brings it to 13. That is why the `like` route is written as `update(Course).values(likes=Course.likes + 1)`.
