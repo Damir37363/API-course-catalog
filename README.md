@@ -104,7 +104,7 @@ Each experiment was done one at a time, and the project was returned to its orig
 
 ## Bonus
 
-All bonus tasks were done on clean data (`seed.sql`). After tasks 1, 2, and 5 the changes to the models and the migrations were rolled back (`alembic check` is clean, `alembic heads` is `0002`). The scripts of tasks 3–5 stay in the repository: `try_n_plus_1.py`, `try_lost_update.py` (add `atomic` for the fixed variant), and `try_delete.py`.
+All bonus tasks were done on clean data (`seed.sql`). After tasks 1, 2, and 5 the changes to the models and the migrations were rolled back (`alembic check` is clean, `alembic heads` is `0002`). The scripts of tasks 3–5 stay in the repository: `try_n_plus_1_orm.py`, `try_lost_update.py` (add `atomic` for the fixed variant), and `try_delete.py`.
 
 ### Task 1. A CHECK that autogenerate does not see
 
@@ -122,7 +122,7 @@ All bonus tasks were done on clean data (`seed.sql`). After tasks 1, 2, and 5 th
 
 ### Task 3. The N+1 problem
 
-`python try_n_plus_1.py` counts the queries with the `before_cursor_execute` event:
+`python try_n_plus_1_orm.py` counts the queries with the `before_cursor_execute` event:
 
 ```text
 lazy          enrollments: 6, queries: 7
