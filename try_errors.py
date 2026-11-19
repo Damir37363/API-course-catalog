@@ -13,7 +13,7 @@ CASES = [
     ("unknown student", "/enrollments",
      {"courseId": "web-security", "studentId": 999}, 404, "student-not-found"),
     ("name too short", "/students",
-     {"name": "N", "email": "n@example.com"}, 422, None),
+     {"name": "N", "email": "n@example.com"}, 422, "validation-error"),
 ]
 
 failed = 0
