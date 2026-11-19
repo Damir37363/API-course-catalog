@@ -125,6 +125,38 @@ The "My courses" screen of student 2; numbers from `measure.py`, starting data (
 - **Loaders are created in `Context`, once per request, and the batch function matches rows to keys by value.** A DataLoader remembers the answers by key and uses the request's database session; if it lived for the whole application it would keep stale data from earlier requests (and other users' data) and a session that is already closed. The batch function must return one answer per key in the order of the keys, but `IN (...)` returns rows in any order and may skip keys, so matching by position gives wrong data (experiment 5, where the course titles were silently replaced); matching by the key value does not depend on the order.
 - **Protection is two-layered: `check_limit` and `parse_id` for the known mistakes, `MaskErrors` for everything else.** The checks turn an expected client mistake (a negative `limit`, `id: "abc"`) into a clear message the client can act on, instead of a database error with SQL text, as in experiment 6. `MaskErrors` is the net for what nobody foresaw: it replaces any unexpected exception with `Unexpected error.` and keeps the real text only in the server log. Only masking would leave the client with an uninformative message for its own mistakes; only checks would leak SQL as soon as one case is forgotten.
 
+## Bonus (Lab 8)
+
+### Task 1. Validation errors as Problem Details
+
+- Before: a bad `POST /students` (`name: "N"`, `email: "bad"`) answered with the FastAPI default, `application/json` and a `detail` list. Now it answers `422` with `application/problem+json`, `type: https://example.com/problems/validation-error`, `title: Validation failed`, and an `errors` list, one item for every wrong value: `{"in": "body", "field": "name", "detail": "String should have at least 2 characters"}`. Both mistakes of the request come at once, so the client can fix them in one go. `python try_errors.py` shows `validation-error` in its last row (`5 of 5 as expected`).
+- Where the list comes from: `RequestValidationError.errors()` is Pydantic's list of dictionaries, one per wrong value, each with `loc` (the path to the value, for example `["body", "name"]`) and `msg`. The handler in `problem.py` turns the first part of `loc` into `in`, the rest (joined with a dot) into `field`, and `msg` into `detail`.
+- Why `errors` is an extension: RFC 9457 defines the members `type`, `title`, `status`, `detail`, and `instance`, and explicitly allows extension members for details specific to a kind of problem. A client that knows only the standard understands the document and ignores `errors`; a client that knows it gets the full list. The validation list enriches the format and does not break it.
+
+### Task 2. `createStudent` and one rule for two APIs
+
+- The problem: a name of two spaces passes Pydantic (`min_length=2` counts characters) and `POST /students` answered `201` and created a student with a blank name.
+- The fix lives in `services.py`: `create_student` raises `ServiceError("INVALID_NAME", ...)` when `len(name.strip()) < 2`. REST translates the code with a new `PROBLEMS` entry in `problem.py` (`422`, `.../invalid-name`); GraphQL got the `createStudent` mutation (`CreateStudentInput`, `CreateStudentPayload` with `student` and `userErrors`) and needs no translation table, because `userErrors` carry the code as it is.
+- Results: `createStudent` with name `N` gave `userErrors[0].code = INVALID_NAME`; with a taken email `EMAIL_TAKEN`; with `Nurlan Abenov` and a new email it created the student (`student { id name }`). REST with two spaces gave `422` `application/problem+json` and `invalid-name`. `try_graphql.py`: `8 of 8 as expected`, `try_errors.py`: `5 of 5 as expected`; the schema has `createStudent(input: CreateStudentInput!): CreateStudentPayload!`.
+- Deliberate break: with the `INVALID_NAME` line of `PROBLEMS` commented out, the REST route answered `500 Internal Server Error` (the server log ends with `KeyError: 'INVALID_NAME'`), while the GraphQL mutation still worked as before. Then I put the line back.
+- Why the rule is in `services.py`: it is written once and both APIs get it. If it lived in the Pydantic schema of REST, GraphQL would have no such protection (a name of spaces would pass there), and two copies of a rule drift apart.
+- To add a new error code: (1) raise `ServiceError(code, message)` in `services.py`; (2) add the code to `PROBLEMS` in `problem.py` (status, `type` slug, title), otherwise REST answers `500` with a `KeyError`; (3) GraphQL needs nothing; (4) add a case to `try_errors.py` and `try_graphql.py`.
+
+### Task 3. A blocking resolver
+
+I measured four simultaneous requests, where the database "thinks" for 0.5 s in each (`SELECT pg_sleep(0.5)`). The experiment files (`blocking_app.py`, `blocking_client.py`) were run outside the repository and are not added to it.
+
+| Variant | Time for 4 requests |
+|---------|---------------------|
+| REST, `def` route | 0.63 s |
+| GraphQL, synchronous resolver (`def slow_sync`) | 2.03 s |
+| GraphQL, `async def` + `run_in_threadpool` | 0.52 s |
+
+- Why the REST `def` route does not block: FastAPI runs a `def` route in a thread pool, so while one request waits for the database, the other three wait in other threads and finish together (about 0.5 s).
+- Why the synchronous GraphQL resolver does: Strawberry calls a plain `def` resolver on the event loop thread itself, so the 0.5 s wait stops the whole loop, and the four requests queue up one after another (4 × 0.5 s = 2 s).
+- The cure is the line `return await run_in_threadpool(pause, info.context.db)` in an `async def` resolver: the blocking call goes to a worker thread, the loop stays free, and the time falls back to about 0.5 s.
+- In this project it is almost invisible, because the queries take milliseconds, so four of them in a row add a few milliseconds. It becomes serious with slow queries (hundreds of milliseconds), many simultaneous users, or calls to external services: then every request waits, even those that do not touch the database. One caution for the cure: a single `Session` is not safe to share between fields that run in parallel threads, so a real project gives each parallel call its own session.
+
 ## Earlier labs
 
 The parts below were written in Lab 7 and describe the state of the project before GraphQL.
